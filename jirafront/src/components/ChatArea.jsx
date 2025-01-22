@@ -1,54 +1,130 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import ChatMessage from './ChatMessage';
+import { createClient } from '@supabase/supabase-js';
 
-const ChatArea = () => {
+const supabase = createClient('https://auwuojgyebcqiprkhizf.supabase.co', 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImF1d3Vvamd5ZWJjcWlwcmtoaXpmIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Mzc0MTI3MzcsImV4cCI6MjA1Mjk4ODczN30.U1CukrPhrGKmAx5jFvn8c-M8blFDqpRXZMwYngCoM1M');
+
+const ChatArea = ({ conversation }) => {
   const [message, setMessage] = useState('');
-  const [messages, setMessages] = useState([
-    {
-      type: 'bot',
-      message: "Hello! I'm your Jira assistant. How can I help you today?"
-    }
-  ]);
+  const [messages, setMessages] = useState([]);
   const [isLoading, setIsLoading] = useState(false);
+
+  // Fetch messages when conversation changes
+  useEffect(() => {
+    const fetchMessages = async () => {
+      if (!conversation) return;
+
+      const { data, error } = await supabase
+        .from('messages')
+        .select('*')
+        .eq('conversation_id', conversation.id)
+        .order('created_at', { ascending: true });
+
+      if (error) {
+        console.error('Error fetching messages:', error);
+      } else {
+        setMessages(data || []);
+      }
+    };
+
+    fetchMessages();
+
+    // Subscribe to new messages
+    const channel = supabase
+      .channel(`messages:${conversation?.id}`)
+      .on('postgres_changes', 
+        { 
+          event: '*', 
+          schema: 'public', 
+          table: 'messages',
+          filter: `conversation_id=eq.${conversation?.id}` 
+        }, 
+        fetchMessages
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [conversation]);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
-    if (message.trim()) {
-      // Add user message to chat
-      const userMessage = { type: 'user', message: message.trim() };
-      setMessages(prev => [...prev, userMessage]);
-      
-      // Clear input
-      setMessage('');
-      
-      // Show loading state
-      setIsLoading(true);
-      
-      try {
-        // Call the API
-        const response = await fetch(`http://localhost:8000/answer?question=${encodeURIComponent(message.trim())}`);
-        const data = await response.text();
-        
-        // Add bot response to chat
-        setMessages(prev => [...prev, { type: 'bot', message: data }]);
-      } catch (error) {
-        console.error('Error fetching response:', error);
-        setMessages(prev => [...prev, { 
-          type: 'bot', 
-          message: "I'm sorry, I encountered an error while processing your request. Please try again." 
+    if (!message.trim() || !conversation) return;
+
+    // Add user message to chat
+    const userMessage = { type: 'user', content: message.trim() };
+    
+    try {
+      // Save user message to database
+      const { error: messageError } = await supabase
+        .from('messages')
+        .insert([{
+          conversation_id: conversation.id,
+          content: userMessage.content,
+          type: 'user'
         }]);
-      } finally {
-        setIsLoading(false);
+      
+      if (messageError) throw messageError;
+      console.log("hey there");
+      // Clear input and show loading
+      setMessage('');
+      setIsLoading(true);
+
+      // Call the API
+      const response = await fetch(`http://localhost:8000/answer?question=${encodeURIComponent(message.trim())}`);
+      const botResponse = await response.text();
+
+      // Save bot response to database
+      const { error: botError } = await supabase
+        .from('messages')
+        .insert([{
+          conversation_id: conversation.id,
+          content: botResponse,
+          type: 'bot'
+        }]);
+
+      if (botError) throw botError;
+
+      // Update conversation title if it's the first message
+      if (messages.length === 0) {
+        const title = message.length > 30 ? message.substring(0, 30) + '...' : message;
+        const { error: titleError } = await supabase
+          .from('conversations')
+          .update({ title })
+          .eq('id', conversation.id);
+
+        if (titleError) throw titleError;
       }
+
+    } catch (error) {
+      console.error('Error handling message:', error);
+      setMessages(prev => [...prev, { 
+        type: 'bot', 
+        content: "I'm sorry, I encountered an error while processing your request. Please try again." 
+      }]);
+    } finally {
+      setIsLoading(false);
     }
   };
+
+  if (!conversation) {
+    return (
+      <div className="flex-1 flex flex-col h-screen bg-gradient-to-br from-gray-50 to-blue-50 items-center justify-center">
+        <div className="text-center">
+          <h2 className="text-2xl font-semibold text-gray-800 mb-2">Welcome to Jira Chat</h2>
+          <p className="text-gray-600">Start a new conversation to begin</p>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="flex-1 flex flex-col h-screen bg-gradient-to-br from-gray-50 to-blue-50">
       {/* Chat Header */}
       <div className="bg-white border-b border-gray-200 p-4 shadow-sm">
         <div className="flex items-center justify-between max-w-4xl mx-auto">
-          <h2 className="text-lg font-semibold text-gray-800">New Conversation</h2>
+          <h2 className="text-lg font-semibold text-gray-800">{conversation.title}</h2>
           <div className="flex items-center space-x-2">
             <button className="p-2 hover:bg-gray-100 rounded-lg transition-colors">
               <svg className="w-5 h-5 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -63,8 +139,8 @@ const ChatArea = () => {
       <div className="flex-1 overflow-y-auto p-4 space-y-6">
         <div className="max-w-4xl mx-auto">
           {messages.map((msg, index) => (
-            <div key={index} className="mb-6">
-              <ChatMessage type={msg.type} message={msg.message} />
+            <div key={msg.id || index} className="mb-6">
+              <ChatMessage type={msg.type} message={msg.content} />
             </div>
           ))}
           {isLoading && (

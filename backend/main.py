@@ -3,7 +3,6 @@ import os
 from pinecone import Pinecone
 import cohere
 from fastapi.middleware.cors import CORSMiddleware
-from pinecone_plugins.assistant.models.chat import Message
 import dotenv
 from dotenv import load_dotenv
 
