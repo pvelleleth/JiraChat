@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import ChatMessage from './ChatMessage';
 import { createClient } from '@supabase/supabase-js';
 
@@ -8,11 +8,47 @@ const ChatArea = ({ conversation }) => {
   const [message, setMessage] = useState('');
   const [messages, setMessages] = useState([]);
   const [isLoading, setIsLoading] = useState(false);
+  const [user, setUser] = useState(null);
+  const messagesEndRef = useRef(null);
+
+  const scrollToBottom = () => {
+    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  };
+
+  useEffect(() => {
+    scrollToBottom();
+  }, [messages]);
+
+  // Get current user
+  useEffect(() => {
+    const getUser = async () => {
+      const { data: { user } } = await supabase.auth.getUser();
+      setUser(user);
+    };
+    getUser();
+  }, []);
 
   // Fetch messages when conversation changes
   useEffect(() => {
     const fetchMessages = async () => {
-      if (!conversation) return;
+      if (!conversation || !user) return;
+
+      // First verify this conversation belongs to the current user
+      const { data: convData, error: convError } = await supabase
+        .from('conversations')
+        .select('user_id')
+        .eq('id', conversation.id)
+        .single();
+
+      if (convError) {
+        console.error('Error verifying conversation ownership:', convError);
+        return;
+      }
+
+      if (convData.user_id !== user.id) {
+        console.error('Unauthorized access to conversation');
+        return;
+      }
 
       const { data, error } = await supabase
         .from('messages')
@@ -27,72 +63,96 @@ const ChatArea = ({ conversation }) => {
       }
     };
 
-    fetchMessages();
+    if (user) {
+      fetchMessages();
 
-    // Subscribe to new messages
-    const channel = supabase
-      .channel(`messages:${conversation?.id}`)
-      .on('postgres_changes', 
-        { 
-          event: '*', 
-          schema: 'public', 
-          table: 'messages',
-          filter: `conversation_id=eq.${conversation?.id}` 
-        }, 
-        fetchMessages
-      )
-      .subscribe();
+      // Subscribe to new messages
+      const channel = supabase
+        .channel(`messages:${conversation?.id}`)
+        .on('postgres_changes', 
+          { 
+            event: 'INSERT', 
+            schema: 'public', 
+            table: 'messages',
+            filter: `conversation_id=eq.${conversation?.id}` 
+          }, 
+          (payload) => {
+            setMessages(currentMessages => [...currentMessages, payload.new]);
+          }
+        )
+        .subscribe();
 
-    return () => {
-      supabase.removeChannel(channel);
-    };
-  }, [conversation]);
+      return () => {
+        supabase.removeChannel(channel);
+      };
+    }
+  }, [conversation, user]);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
-    if (!message.trim() || !conversation) return;
+    if (!message.trim() || !conversation || !user) return;
 
-    // Add user message to chat
-    const userMessage = { type: 'user', content: message.trim() };
-    
+    // Verify conversation ownership before sending message
+    const { data: convData, error: convError } = await supabase
+      .from('conversations')
+      .select('user_id')
+      .eq('id', conversation.id)
+      .single();
+
+    if (convError || convData.user_id !== user.id) {
+      console.error('Unauthorized access to conversation');
+      return;
+    }
+
     try {
-      // Save user message to database
-      const { error: messageError } = await supabase
+      setIsLoading(true);
+      const userMessageContent = message.trim();
+      setMessage(''); // Clear input early
+
+      // Save user message to database and update local state immediately
+      const { data: userMessageData, error: messageError } = await supabase
         .from('messages')
         .insert([{
           conversation_id: conversation.id,
-          content: userMessage.content,
+          content: userMessageContent,
           type: 'user'
-        }]);
-      
+        }])
+        .select()
+        .single();
+
       if (messageError) throw messageError;
-      console.log("hey there");
-      // Clear input and show loading
-      setMessage('');
-      setIsLoading(true);
+      
+      // Update local state with user message
+      setMessages(currentMessages => [...currentMessages, userMessageData]);
 
       // Call the API
-      const response = await fetch(`http://localhost:8000/answer?question=${encodeURIComponent(message.trim())}`);
+      const response = await fetch(`http://localhost:8000/answer?question=${encodeURIComponent(userMessageContent)}`);
       const botResponse = await response.text();
 
-      // Save bot response to database
-      const { error: botError } = await supabase
+      // Save bot response to database and update local state immediately
+      const { data: botMessageData, error: botError } = await supabase
         .from('messages')
         .insert([{
           conversation_id: conversation.id,
           content: botResponse,
           type: 'bot'
-        }]);
+        }])
+        .select()
+        .single();
 
       if (botError) throw botError;
+      
+      // Update local state with bot message
+      setMessages(currentMessages => [...currentMessages, botMessageData]);
 
       // Update conversation title if it's the first message
       if (messages.length === 0) {
-        const title = message.length > 30 ? message.substring(0, 30) + '...' : message;
+        const title = userMessageContent.length > 30 ? userMessageContent.substring(0, 30) + '...' : userMessageContent;
         const { error: titleError } = await supabase
           .from('conversations')
           .update({ title })
-          .eq('id', conversation.id);
+          .eq('id', conversation.id)
+          .eq('user_id', user.id); // Ensure we only update if user owns the conversation
 
         if (titleError) throw titleError;
       }
@@ -157,6 +217,7 @@ const ChatArea = ({ conversation }) => {
               </div>
             </div>
           )}
+          <div ref={messagesEndRef} />
         </div>
       </div>
 

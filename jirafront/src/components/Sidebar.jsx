@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { createClient } from '@supabase/supabase-js';
 
 const supabase = createClient('https://auwuojgyebcqiprkhizf.supabase.co', 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImF1d3Vvamd5ZWJjcWlwcmtoaXpmIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Mzc0MTI3MzcsImV4cCI6MjA1Mjk4ODczN30.U1CukrPhrGKmAx5jFvn8c-M8blFDqpRXZMwYngCoM1M');
@@ -6,6 +6,14 @@ const supabase = createClient('https://auwuojgyebcqiprkhizf.supabase.co', 'eyJhb
 const Sidebar = ({ onNewChat, onSelectChat, currentConversationId }) => {
   const [conversations, setConversations] = useState([]);
   const [user, setUser] = useState(null);
+  const [contextMenu, setContextMenu] = useState(null);
+
+  // Close context menu when clicking outside
+  useEffect(() => {
+    const handleClick = () => setContextMenu(null);
+    document.addEventListener('click', handleClick);
+    return () => document.removeEventListener('click', handleClick);
+  }, []);
 
   useEffect(() => {
     // Get current user
@@ -22,33 +30,37 @@ const Sidebar = ({ onNewChat, onSelectChat, currentConversationId }) => {
       const { data, error } = await supabase
         .from('conversations')
         .select('*')
+        .eq('user_id', user.id)
         .order('updated_at', { ascending: false });
 
       if (error) {
         console.error('Error fetching conversations:', error);
       } else {
-        setConversations(data);
+        setConversations(data || []);
       }
     };
 
-    fetchConversations();
+    if (user) {
+      fetchConversations();
 
-    // Subscribe to changes
-    const channel = supabase
-      .channel('conversations')
-      .on('postgres_changes', 
-        { 
-          event: '*', 
-          schema: 'public', 
-          table: 'conversations' 
-        }, 
-        fetchConversations
-      )
-      .subscribe();
+      // Subscribe to changes for current user's conversations only
+      const channel = supabase
+        .channel(`conversations:${user.id}`)
+        .on('postgres_changes', 
+          { 
+            event: '*', 
+            schema: 'public', 
+            table: 'conversations',
+            filter: `user_id=eq.${user.id}`
+          }, 
+          fetchConversations
+        )
+        .subscribe();
 
-    return () => {
-      supabase.removeChannel(channel);
-    };
+      return () => {
+        supabase.removeChannel(channel);
+      };
+    }
   }, [user]);
 
   const handleNewChat = async () => {
@@ -69,6 +81,49 @@ const Sidebar = ({ onNewChat, onSelectChat, currentConversationId }) => {
       console.error('Error creating conversation:', error);
     } else {
       onNewChat(data);
+    }
+  };
+
+  const handleContextMenu = (e, conversation) => {
+    e.preventDefault();
+    setContextMenu({
+      x: e.pageX,
+      y: e.pageY,
+      conversation
+    });
+  };
+
+  const handleDeleteConversation = async (conversation) => {
+    if (!user) return;
+
+    try {
+      // First delete all messages in the conversation
+      const { error: messagesError } = await supabase
+        .from('messages')
+        .delete()
+        .eq('conversation_id', conversation.id);
+
+      if (messagesError) throw messagesError;
+
+      // Then delete the conversation
+      const { error: conversationError } = await supabase
+        .from('conversations')
+        .delete()
+        .eq('id', conversation.id)
+        .eq('user_id', user.id);
+
+      if (conversationError) throw conversationError;
+
+      // Update local state
+      setConversations(prev => prev.filter(conv => conv.id !== conversation.id));
+      setContextMenu(null);
+
+      // If this was the current conversation, clear it
+      if (currentConversationId === conversation.id) {
+        onSelectChat(null);
+      }
+    } catch (error) {
+      console.error('Error deleting conversation:', error);
     }
   };
 
@@ -112,6 +167,7 @@ const Sidebar = ({ onNewChat, onSelectChat, currentConversationId }) => {
               <button
                 key={conv.id}
                 onClick={() => onSelectChat(conv)}
+                onContextMenu={(e) => handleContextMenu(e, conv)}
                 className={`w-full flex items-center space-x-3 text-left px-4 py-3 rounded-xl hover:bg-white hover:shadow-md transition-all duration-200 ${
                   currentConversationId === conv.id 
                     ? 'bg-white shadow-md text-blue-600' 
@@ -146,6 +202,24 @@ const Sidebar = ({ onNewChat, onSelectChat, currentConversationId }) => {
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
             </svg>
           </div>
+        </div>
+      )}
+
+      {/* Context Menu */}
+      {contextMenu && (
+        <div
+          className="fixed bg-white rounded-lg shadow-lg py-2 w-48 border border-gray-200"
+          style={{ top: contextMenu.y, left: contextMenu.x }}
+        >
+          <button
+            onClick={() => handleDeleteConversation(contextMenu.conversation)}
+            className="w-full px-4 py-2 text-left text-sm text-red-600 hover:bg-red-50 flex items-center space-x-2"
+          >
+            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+            </svg>
+            <span>Delete Conversation</span>
+          </button>
         </div>
       )}
     </div>
