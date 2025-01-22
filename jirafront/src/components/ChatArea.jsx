@@ -1,54 +1,190 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import ChatMessage from './ChatMessage';
+import { createClient } from '@supabase/supabase-js';
 
-const ChatArea = () => {
+const supabase = createClient('https://auwuojgyebcqiprkhizf.supabase.co', 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImF1d3Vvamd5ZWJjcWlwcmtoaXpmIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Mzc0MTI3MzcsImV4cCI6MjA1Mjk4ODczN30.U1CukrPhrGKmAx5jFvn8c-M8blFDqpRXZMwYngCoM1M');
+
+const ChatArea = ({ conversation }) => {
   const [message, setMessage] = useState('');
-  const [messages, setMessages] = useState([
-    {
-      type: 'bot',
-      message: "Hello! I'm your Jira assistant. How can I help you today?"
-    }
-  ]);
+  const [messages, setMessages] = useState([]);
   const [isLoading, setIsLoading] = useState(false);
+  const [user, setUser] = useState(null);
+  const messagesEndRef = useRef(null);
+
+  const scrollToBottom = () => {
+    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  };
+
+  useEffect(() => {
+    scrollToBottom();
+  }, [messages]);
+
+  // Get current user
+  useEffect(() => {
+    const getUser = async () => {
+      const { data: { user } } = await supabase.auth.getUser();
+      setUser(user);
+    };
+    getUser();
+  }, []);
+
+  // Fetch messages when conversation changes
+  useEffect(() => {
+    const fetchMessages = async () => {
+      if (!conversation || !user) return;
+
+      // First verify this conversation belongs to the current user
+      const { data: convData, error: convError } = await supabase
+        .from('conversations')
+        .select('user_id')
+        .eq('id', conversation.id)
+        .single();
+
+      if (convError) {
+        console.error('Error verifying conversation ownership:', convError);
+        return;
+      }
+
+      if (convData.user_id !== user.id) {
+        console.error('Unauthorized access to conversation');
+        return;
+      }
+
+      const { data, error } = await supabase
+        .from('messages')
+        .select('*')
+        .eq('conversation_id', conversation.id)
+        .order('created_at', { ascending: true });
+
+      if (error) {
+        console.error('Error fetching messages:', error);
+      } else {
+        setMessages(data || []);
+      }
+    };
+
+    if (user) {
+      fetchMessages();
+
+      // Subscribe to new messages
+      const channel = supabase
+        .channel(`messages:${conversation?.id}`)
+        .on('postgres_changes', 
+          { 
+            event: 'INSERT', 
+            schema: 'public', 
+            table: 'messages',
+            filter: `conversation_id=eq.${conversation?.id}` 
+          }, 
+          (payload) => {
+            setMessages(currentMessages => [...currentMessages, payload.new]);
+          }
+        )
+        .subscribe();
+
+      return () => {
+        supabase.removeChannel(channel);
+      };
+    }
+  }, [conversation, user]);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
-    if (message.trim()) {
-      // Add user message to chat
-      const userMessage = { type: 'user', message: message.trim() };
-      setMessages(prev => [...prev, userMessage]);
-      
-      // Clear input
-      setMessage('');
-      
-      // Show loading state
+    if (!message.trim() || !conversation || !user) return;
+
+    // Verify conversation ownership before sending message
+    const { data: convData, error: convError } = await supabase
+      .from('conversations')
+      .select('user_id')
+      .eq('id', conversation.id)
+      .single();
+
+    if (convError || convData.user_id !== user.id) {
+      console.error('Unauthorized access to conversation');
+      return;
+    }
+
+    try {
       setIsLoading(true);
+      const userMessageContent = message.trim();
+      setMessage(''); // Clear input early
+
+      // Save user message to database and update local state immediately
+      const { data: userMessageData, error: messageError } = await supabase
+        .from('messages')
+        .insert([{
+          conversation_id: conversation.id,
+          content: userMessageContent,
+          type: 'user'
+        }])
+        .select()
+        .single();
+
+      if (messageError) throw messageError;
       
-      try {
-        // Call the API
-        const response = await fetch(`http://localhost:8000/answer?question=${encodeURIComponent(message.trim())}`);
-        const data = await response.text();
-        
-        // Add bot response to chat
-        setMessages(prev => [...prev, { type: 'bot', message: data }]);
-      } catch (error) {
-        console.error('Error fetching response:', error);
-        setMessages(prev => [...prev, { 
-          type: 'bot', 
-          message: "I'm sorry, I encountered an error while processing your request. Please try again." 
-        }]);
-      } finally {
-        setIsLoading(false);
+      // Update local state with user message
+      setMessages(currentMessages => [...currentMessages, userMessageData]);
+
+      // Call the API
+      const response = await fetch(`http://localhost:8000/answer?question=${encodeURIComponent(userMessageContent)}`);
+      const botResponse = await response.text();
+
+      // Save bot response to database and update local state immediately
+      const { data: botMessageData, error: botError } = await supabase
+        .from('messages')
+        .insert([{
+          conversation_id: conversation.id,
+          content: botResponse,
+          type: 'bot'
+        }])
+        .select()
+        .single();
+
+      if (botError) throw botError;
+      
+      // Update local state with bot message
+      setMessages(currentMessages => [...currentMessages, botMessageData]);
+
+      // Update conversation title if it's the first message
+      if (messages.length === 0) {
+        const title = userMessageContent.length > 30 ? userMessageContent.substring(0, 30) + '...' : userMessageContent;
+        const { error: titleError } = await supabase
+          .from('conversations')
+          .update({ title })
+          .eq('id', conversation.id)
+          .eq('user_id', user.id); // Ensure we only update if user owns the conversation
+
+        if (titleError) throw titleError;
       }
+
+    } catch (error) {
+      console.error('Error handling message:', error);
+      setMessages(prev => [...prev, { 
+        type: 'bot', 
+        content: "I'm sorry, I encountered an error while processing your request. Please try again." 
+      }]);
+    } finally {
+      setIsLoading(false);
     }
   };
+
+  if (!conversation) {
+    return (
+      <div className="flex-1 flex flex-col h-screen bg-gradient-to-br from-gray-50 to-blue-50 items-center justify-center">
+        <div className="text-center">
+          <h2 className="text-2xl font-semibold text-gray-800 mb-2">Welcome to Jira Chat</h2>
+          <p className="text-gray-600">Start a new conversation to begin</p>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="flex-1 flex flex-col h-screen bg-gradient-to-br from-gray-50 to-blue-50">
       {/* Chat Header */}
       <div className="bg-white border-b border-gray-200 p-4 shadow-sm">
         <div className="flex items-center justify-between max-w-4xl mx-auto">
-          <h2 className="text-lg font-semibold text-gray-800">New Conversation</h2>
+          <h2 className="text-lg font-semibold text-gray-800">{conversation.title}</h2>
           <div className="flex items-center space-x-2">
             <button className="p-2 hover:bg-gray-100 rounded-lg transition-colors">
               <svg className="w-5 h-5 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -63,8 +199,8 @@ const ChatArea = () => {
       <div className="flex-1 overflow-y-auto p-4 space-y-6">
         <div className="max-w-4xl mx-auto">
           {messages.map((msg, index) => (
-            <div key={index} className="mb-6">
-              <ChatMessage type={msg.type} message={msg.message} />
+            <div key={msg.id || index} className="mb-6">
+              <ChatMessage type={msg.type} message={msg.content} />
             </div>
           ))}
           {isLoading && (
@@ -81,6 +217,7 @@ const ChatArea = () => {
               </div>
             </div>
           )}
+          <div ref={messagesEndRef} />
         </div>
       </div>
 

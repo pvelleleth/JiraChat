@@ -3,7 +3,6 @@ import os
 from pinecone import Pinecone
 import cohere
 from fastapi.middleware.cors import CORSMiddleware
-from pinecone_plugins.assistant.models.chat import Message
 import dotenv
 from dotenv import load_dotenv
 
@@ -95,7 +94,7 @@ Answer:"""
         model="command-r-plus",
         temperature=0
     )
-    prompt2 = f"Make sure to format the answer in a way that is easy to read and understand. Use markdown formatting for lists and other elements. Answer in markdown format. Answer: {response.text}"
+    prompt2 = f"Make sure to format the answer in a way that is easy to read and understand. Use markdown formatting for lists and other appropriate elements. Give your response in markdown format. Here is the text you have to format: {response.text}"
     response2 = co.chat(
         message=prompt2,
         model="command-r-plus",
