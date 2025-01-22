@@ -1,10 +1,12 @@
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 import os
 from pinecone import Pinecone
 import cohere
 from fastapi.middleware.cors import CORSMiddleware
 import dotenv
 from dotenv import load_dotenv
+from pydantic import BaseModel
+from typing import List
 
 # Load environment variables from .env file
 load_dotenv()
@@ -31,6 +33,14 @@ app.add_middleware(
 
 # Connect to the index
 index = pc.Index(INDEX_NAME)
+
+class Message(BaseModel):
+    role: str
+    content: str
+
+class ConversationRequest(BaseModel):
+    question: str
+    conversation_history: List[Message]
 
 # Generate embeddings using Cohere
 def get_embedding(text, model="embed-english-v3.0"):
@@ -60,43 +70,51 @@ def semantic_search(query, top_k=30):
 def read_root():
     return {"message": "Hello, World!"}
 
-@app.get("/answer")
-def answer(question: str):
-    results = semantic_search(question)
-
-    print(f"Top {len(results['matches'])} results for your query:\n")
-    for match in results['matches']:
-        print(f"Score: {match['score']}")
-        print(f"Metadata: {match['metadata']}\n")
-        
-    context = ""
+@app.post("/answer")
+def answer(request: ConversationRequest):
+    # Get search results for the current question
+    results = semantic_search(request.question)
+    
+    # Format search results
+    search_context = ""
     for match in results['matches']:
         metadata = match['metadata']
-        context += f"\nProject: {metadata['project']}\n"
-        context += f"Issue Key: {metadata['issue_key']}\n"
-        context += f"Summary: {metadata['summary']}\n"
-        context += f"Description: {metadata['description']}\n"
-        context += f"Assignee: {metadata['assignee']}\n"
-        context += f"Status: {metadata['status']}\n"
-        context += f"Issue Type: {metadata['issue_type']}\n"
-        context += "-" * 50 + "\n"
+        search_context += f"\nProject: {metadata['project']}\n"
+        search_context += f"Issue Key: {metadata['issue_key']}\n"
+        search_context += f"Summary: {metadata['summary']}\n"
+        search_context += f"Description: {metadata['description']}\n"
+        search_context += f"Assignee: {metadata['assignee']}\n"
+        search_context += f"Status: {metadata['status']}\n"
+        search_context += f"Issue Type: {metadata['issue_type']}\n"
+        search_context += "-" * 50 + "\n"
 
-    # Ask LLM using retrieved context
-    prompt = f"""Based on the following search results, please answer the question: "{question}"
+    # Create preamble with search results and instructions
+    preamble = f"""You are a helpful Jira assistant. Use the following Jira information to help answer questions.
+When referring to specific Jira issues, always include their keys.
 
-Search Results:
-{context}
+Relevant Jira information:
+{search_context}"""
 
-Answer:"""
+    # Format conversation history for Cohere
+    chat_history = []
+    for msg in request.conversation_history:
+        chat_history.append({
+            "role": "user" if msg.role == "user" else "chatbot",
+            "message": msg.content
+        })
 
+    # Get response from Cohere
     response = co.chat(
-        message=prompt,
         model="command-r-plus",
+        preamble=preamble,
+        chat_history=chat_history,
+        message=request.question,
         temperature=0
     )
-    prompt2 = f"Make sure to format the answer in a way that is easy to read and understand. Use markdown formatting for lists and other appropriate elements. Give your response in markdown format. Here is the text you have to format: {response.text}"
+    
+    #return response.text[1:-1]
     response2 = co.chat(
-        message=prompt2,
+        message=f"Please format the response in markdown to make it easy to read and understand. Answer in markdown. Here is the response that needs formatting: {response.text}",
         model="command-r-plus",
         temperature=0
     )

@@ -92,18 +92,6 @@ const ChatArea = ({ conversation }) => {
     e.preventDefault();
     if (!message.trim() || !conversation || !user) return;
 
-    // Verify conversation ownership before sending message
-    const { data: convData, error: convError } = await supabase
-      .from('conversations')
-      .select('user_id')
-      .eq('id', conversation.id)
-      .single();
-
-    if (convError || convData.user_id !== user.id) {
-      console.error('Unauthorized access to conversation');
-      return;
-    }
-
     try {
       setIsLoading(true);
       const userMessageContent = message.trim();
@@ -125,8 +113,29 @@ const ChatArea = ({ conversation }) => {
       // Update local state with user message
       setMessages(currentMessages => [...currentMessages, userMessageData]);
 
-      // Call the API
-      const response = await fetch(`http://localhost:8000/answer?question=${encodeURIComponent(userMessageContent)}`);
+      // Prepare conversation history
+      const conversationHistory = messages.map(msg => ({
+        role: msg.type === 'user' ? 'user' : 'assistant',
+        content: msg.content
+      }));
+
+      // Add the current message
+      conversationHistory.push({
+        role: 'user',
+        content: userMessageContent
+      });
+
+      // Call the API with conversation history
+      const response = await fetch('http://localhost:8000/answer', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          question: userMessageContent,
+          conversation_history: conversationHistory
+        })
+      });
       const botResponse = await response.text();
 
       // Save bot response to database and update local state immediately
@@ -152,7 +161,7 @@ const ChatArea = ({ conversation }) => {
           .from('conversations')
           .update({ title })
           .eq('id', conversation.id)
-          .eq('user_id', user.id); // Ensure we only update if user owns the conversation
+          .eq('user_id', user.id);
 
         if (titleError) throw titleError;
       }
