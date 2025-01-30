@@ -133,34 +133,34 @@ const Sidebar = ({ onNewChat, onSelectChat, currentConversationId }) => {
   };
 
   return (
-    <div className="h-screen w-72 bg-gradient-to-b from-white to-blue-50 border-r border-gray-200 flex flex-col shadow-lg">
+    <div className="h-screen w-72 bg-gradient-to-b from-white via-blue-50/50 to-indigo-50/50 border-r border-gray-200 flex flex-col shadow-lg backdrop-blur-sm">
       {/* Header */}
-      <div className="p-6 border-b border-gray-200 bg-white">
+      <div className="p-6 border-b border-gray-200 bg-white/80 backdrop-blur-sm sticky top-0 z-10">
         <div className="flex items-center space-x-3">
-          <div className="w-8 h-8 bg-gradient-to-br from-blue-500 to-blue-600 rounded-lg flex items-center justify-center shadow-md">
-            <span className="text-white font-bold">J</span>
+          <div className="w-10 h-10 bg-gradient-to-br from-blue-500 to-indigo-600 rounded-xl flex items-center justify-center shadow-lg ring-2 ring-white">
+            <span className="text-white font-bold text-lg">J</span>
           </div>
-          <h1 className="text-xl font-bold bg-gradient-to-r from-blue-600 to-blue-800 text-transparent bg-clip-text">
+          <h1 className="text-xl font-bold bg-gradient-to-r from-blue-700 to-indigo-700 text-transparent bg-clip-text">
             Jira Chat
           </h1>
         </div>
       </div>
 
       {/* Navigation */}
-      <nav className="flex-1 overflow-y-auto p-4">
+      <nav className="flex-1 overflow-y-auto p-4 scrollbar-thin scrollbar-thumb-blue-200 scrollbar-track-transparent hover:scrollbar-thumb-blue-300">
         <div className="space-y-2">
           <button 
             onClick={handleNewChat}
-            className="w-full flex items-center space-x-3 text-left px-4 py-3 rounded-xl hover:bg-white hover:shadow-md text-gray-700 hover:text-blue-600 transition-all duration-200"
+            className="w-full flex items-center space-x-3 text-left px-4 py-3 rounded-xl hover:bg-white/80 hover:shadow-md text-gray-700 hover:text-blue-600 transition-all duration-200 group"
           >
-            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <svg className="w-5 h-5 transition-transform duration-200 group-hover:scale-110 group-hover:rotate-180" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6v6m0 0v6m0-6h6m-6 0H6" />
             </svg>
-            <span>New Chat</span>
+            <span className="font-medium">New Chat</span>
           </button>
           
           {/* Conversations List */}
-          <div className="border-t border-gray-200 my-4"></div>
+          <div className="border-t border-gray-200/70 my-4"></div>
           
           <div className="space-y-1">
             {conversations.map((conv) => (
@@ -168,16 +168,16 @@ const Sidebar = ({ onNewChat, onSelectChat, currentConversationId }) => {
                 key={conv.id}
                 onClick={() => onSelectChat(conv)}
                 onContextMenu={(e) => handleContextMenu(e, conv)}
-                className={`w-full flex items-center space-x-3 text-left px-4 py-3 rounded-xl hover:bg-white hover:shadow-md transition-all duration-200 ${
+                className={`w-full flex items-center space-x-3 text-left px-4 py-3 rounded-xl hover:bg-white/80 hover:shadow-md transition-all duration-200 group ${
                   currentConversationId === conv.id 
-                    ? 'bg-white shadow-md text-blue-600' 
+                    ? 'bg-white shadow-md text-blue-600 ring-1 ring-blue-100' 
                     : 'text-gray-700 hover:text-blue-600'
                 }`}
               >
-                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <svg className="w-5 h-5 transition-transform duration-200 group-hover:scale-110" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z" />
                 </svg>
-                <span className="truncate">{conv.title}</span>
+                <span className="truncate font-medium">{conv.title}</span>
               </button>
             ))}
           </div>
@@ -186,19 +186,19 @@ const Sidebar = ({ onNewChat, onSelectChat, currentConversationId }) => {
 
       {/* User Profile */}
       {user && (
-        <div className="p-4 bg-white border-t border-gray-200">
+        <div className="p-4 bg-white/80 backdrop-blur-sm border-t border-gray-200 sticky bottom-0">
           <div 
             onClick={handleSignOut}
-            className="flex items-center space-x-3 p-2 rounded-xl hover:bg-blue-50 transition-colors cursor-pointer"
+            className="flex items-center space-x-3 p-3 rounded-xl hover:bg-blue-50/80 transition-all duration-200 cursor-pointer group"
           >
-            <div className="w-10 h-10 rounded-full bg-gradient-to-br from-blue-400 to-blue-600 flex items-center justify-center shadow-md">
+            <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-blue-500 to-indigo-600 flex items-center justify-center shadow-md ring-2 ring-white transition-transform duration-200 group-hover:scale-105">
               <span className="text-white font-medium">{user.email[0].toUpperCase()}</span>
             </div>
             <div className="flex-1">
               <p className="text-sm font-medium text-gray-800">{user.email}</p>
-              <p className="text-xs text-gray-500">Sign out</p>
+              <p className="text-xs text-gray-500 group-hover:text-blue-600 transition-colors">Sign out</p>
             </div>
-            <svg className="w-5 h-5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <svg className="w-5 h-5 text-gray-400 group-hover:text-blue-600 transition-all duration-200 group-hover:translate-x-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
             </svg>
           </div>
@@ -208,14 +208,14 @@ const Sidebar = ({ onNewChat, onSelectChat, currentConversationId }) => {
       {/* Context Menu */}
       {contextMenu && (
         <div
-          className="fixed bg-white rounded-lg shadow-lg py-2 w-48 border border-gray-200"
+          className="fixed bg-white/90 backdrop-blur-sm rounded-lg shadow-lg py-2 w-48 border border-gray-200 animate-fade-in"
           style={{ top: contextMenu.y, left: contextMenu.x }}
         >
           <button
             onClick={() => handleDeleteConversation(contextMenu.conversation)}
-            className="w-full px-4 py-2 text-left text-sm text-red-600 hover:bg-red-50 flex items-center space-x-2"
+            className="w-full px-4 py-2 text-left text-sm text-red-600 hover:bg-red-50/80 flex items-center space-x-2 group transition-colors duration-200"
           >
-            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <svg className="w-4 h-4 transition-transform duration-200 group-hover:scale-110" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
             </svg>
             <span>Delete Conversation</span>

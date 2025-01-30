@@ -50,38 +50,78 @@ class ConversationRequest(BaseModel):
     conversation_history: List[Message]
 
 def classify_query(question: str) -> dict:
-    """Use Cohere to classify the query type and extract relevant parameters."""
+    """Use Cohere to classify the query type and generate JQL."""
+    print("\n=== Query Classification and JQL Generation ===")
+    print(f"Input Question: {question}")
     
-    prompt = f"""Analyze the following question about Jira issues and classify what type of search would be most appropriate.
-Also extract any relevant parameters mentioned in the query.
+    prompt = f"""You are a Jira query expert. Analyze the following question about Jira issues and:
+1. Determine the most appropriate search strategy
+2. Generate a JQL query if appropriate
 
 Question: "{question}"
 
-Classify into one of these types:
+First, classify the query into one of these types:
 1. TEMPORAL (questions about time periods, dates, recent changes)
 2. STATUS_BASED (questions about issue states, progress)
 3. SEMANTIC (questions about content, similarity, topics)
 4. HYBRID (needs both temporal/status and semantic search)
 
+Then, if the query would benefit from a JQL search (temporal, status-based, or hybrid queries), generate an appropriate JQL query.
+
+Guidelines for JQL:
+- Use proper JQL syntax with quotes around values containing spaces
+- Use relative dates like -1w, startOfWeek(), endOfWeek() for time-based queries
+- Include all relevant conditions (status, priority, project, type, etc.)
+- Don't include ORDER BY clauses (they're added automatically)
+
 Output your response in this exact JSON format:
 {{
     "type": "TEMPORAL/STATUS_BASED/SEMANTIC/HYBRID",
-    "needs_jira_api": true/false,
-    "needs_rag": true/false,
-    "time_period": "last_week/last_month/etc" or null,
-    "status": "status value" or null,
-    "jql_components": ["list of relevant JQL conditions"] or []
+    "needs_jira_api": true/false (true if JQL would be helpful),
+    "needs_rag": true/false (true if semantic search would be helpful),
+    "jql": "complete JQL expression" or null
 }}
 
-For example:
+Examples:
+
 Q: "What issues were closed last week?"
 {{
     "type": "TEMPORAL",
     "needs_jira_api": true,
     "needs_rag": false,
-    "time_period": "last_week",
-    "status": "closed",
-    "jql_components": ["status = Closed", "resolved >= -1w"]
+    "jql": "status = \\"Closed\\" AND resolved >= startOfWeek(-1)"
+}}
+
+Q: "Show me all high priority bugs in the Phoenix project"
+{{
+    "type": "STATUS_BASED",
+    "needs_jira_api": true,
+    "needs_rag": false,
+    "jql": "project = \\"Phoenix\\" AND priority = \\"High\\" AND type = \\"Bug\\""
+}}
+
+Q: "Find issues similar to PROJ-123"
+{{
+    "type": "SEMANTIC",
+    "needs_jira_api": false,
+    "needs_rag": true,
+    "jql": null
+}}
+
+Q: "What are the current blockers in our sprint?"
+{{
+    "type": "STATUS_BASED",
+    "needs_jira_api": true,
+    "needs_rag": false,
+    "jql": "sprint in openSprints() AND priority = \\"Blocker\\""
+}}
+
+Q: "What bugs were reported in the last month that mention authentication?"
+{{
+    "type": "HYBRID",
+    "needs_jira_api": true,
+    "needs_rag": true,
+    "jql": "type = \\"Bug\\" AND created >= startOfMonth(-1)"
 }}"""
 
     response = co.chat(
@@ -90,44 +130,70 @@ Q: "What issues were closed last week?"
         temperature=0
     )
     
-    # Convert the response to a dictionary
-    import json
     try:
-        classification = json.loads(response.text)
+        # Extract JSON from the response text
+        start_idx = response.text.find('{')
+        end_idx = response.text.rfind('}') + 1
+        
+        if start_idx == -1 or end_idx == 0:
+            raise ValueError("No JSON object found in response")
+            
+        json_str = response.text[start_idx:end_idx]
+        print(f"\nExtracted JSON string: {json_str}")
+        
+        classification = json.loads(json_str)
+        print(f"Classification Result: {json.dumps(classification, indent=2)}")
         return classification
-    except:
-        # Fallback to RAG if classification fails
+    except Exception as e:
+        print(f"Failed to parse classification response: {str(e)}")
+        print(f"Raw response: {response.text}")
         return {
             "type": "SEMANTIC",
             "needs_jira_api": False,
             "needs_rag": True,
-            "time_period": None,
-            "status": None,
-            "jql_components": []
+            "jql": None
         }
 
-def get_jira_issues(jql_components: List[str]) -> str:
+def get_jira_issues(jql: str) -> str:
     """Fetch issues from Jira API using JQL."""
+    print("\n=== Jira API Search ===")
+    print(f"JQL Query: {jql}")
     
-    # Combine JQL components
-    jql = " AND ".join(jql_components)
-    
-    # Search issues
-    issues = jira.search_issues(jql)
-    
-    # Format results
-    results = ""
-    for issue in issues:
-        results += f"\nProject: {issue.fields.project.key}\n"
-        results += f"Issue Key: {issue.key}\n"
-        results += f"Summary: {issue.fields.summary}\n"
-        results += f"Description: {issue.fields.description or 'No description'}\n"
-        results += f"Assignee: {issue.fields.assignee.displayName if issue.fields.assignee else 'Unassigned'}\n"
-        results += f"Status: {issue.fields.status.name}\n"
-        results += f"Issue Type: {issue.fields.issuetype.name}\n"
-        results += "-" * 50 + "\n"
-    
-    return results
+    try:
+        # Add default ordering if not present
+        if "ORDER BY" not in jql.upper():
+            jql = f"{jql} ORDER BY updated DESC"
+        
+        print(f"Final JQL Query: {jql}")
+        
+        try:
+            issues = jira.search_issues(jql, maxResults=50)
+            print(f"Found {len(issues)} matching issues")
+        except Exception as e:
+            print(f"JQL Query failed: {jql}")
+            print(f"Error: {str(e)}")
+            raise e
+        
+        # Format results
+        if not issues:
+            print("No issues found")
+            return "No issues found matching the criteria."
+            
+        results = ""
+        for issue in issues:
+            results += f"\nProject: {issue.fields.project.key}\n"
+            results += f"Issue Key: {issue.key}\n"
+            results += f"Summary: {issue.fields.summary}\n"
+            results += f"Description: {issue.fields.description or 'No description'}\n"
+            results += f"Assignee: {issue.fields.assignee.displayName if issue.fields.assignee else 'Unassigned'}\n"
+            results += f"Status: {issue.fields.status.name}\n"
+            results += f"Issue Type: {issue.fields.issuetype.name}\n"
+            results += "-" * 50 + "\n"
+        
+        return results
+    except Exception as e:
+        print(f"Error in get_jira_issues: {str(e)}")
+        return f"Error fetching issues: {str(e)}"
 
 # Generate embeddings using Cohere
 def get_embedding(text, model="embed-english-v3.0"):
@@ -141,8 +207,12 @@ def get_embedding(text, model="embed-english-v3.0"):
 
 # Perform semantic search
 def semantic_search(query, top_k=30):
+    print("\n=== Semantic Search ===")
+    print(f"Query: {query}")
+    
     # Generate query embedding
     query_embedding = get_embedding(query)
+    print("Generated query embedding")
 
     # Query the Pinecone index
     search_results = index.query(
@@ -150,6 +220,7 @@ def semantic_search(query, top_k=30):
         top_k=top_k,
         include_metadata=True
     )
+    print(f"Found {len(search_results['matches'])} semantic matches")
 
     return search_results
 
@@ -159,7 +230,11 @@ def read_root():
 
 @app.post("/answer")
 def answer(request: ConversationRequest):
-    # Classify the query
+    print("\n========== New Request ==========")
+    print(f"Question: {request.question}")
+    print(f"Conversation History Length: {len(request.conversation_history)}")
+    
+    # Classify the query and get JQL
     classification = classify_query(request.question)
     
     # Initialize context strings
@@ -168,7 +243,9 @@ def answer(request: ConversationRequest):
     
     # Get RAG results if needed
     if classification["needs_rag"]:
+        print("\nPerforming semantic search...")
         results = semantic_search(request.question)
+        print(f"Processing {len(results['matches'])} semantic search results")
         for match in results['matches']:
             metadata = match['metadata']
             rag_context += f"\nProject: {metadata['project']}\n"
@@ -181,31 +258,39 @@ def answer(request: ConversationRequest):
             rag_context += "-" * 50 + "\n"
     
     # Get Jira API results if needed
-    if classification["needs_jira_api"] and classification["jql_components"]:
-        jira_api_context = get_jira_issues(classification["jql_components"])
+    if classification["needs_jira_api"] and classification["jql"]:
+        print("\nPerforming Jira API search...")
+        jira_api_context = get_jira_issues(classification["jql"])
 
     # Combine contexts
+    print("\n=== Final Context ===")
     combined_context = ""
     if rag_context and jira_api_context:
+        print("Using both semantic search and Jira API results")
         combined_context = f"""Information from semantic search:
 {rag_context}
 
 Information from Jira API:
 {jira_api_context}"""
     elif rag_context:
+        print("Using only semantic search results")
         combined_context = rag_context
     else:
+        print("Using only Jira API results")
         combined_context = jira_api_context
 
     # Create preamble with search results and instructions
     preamble = f"""You are a helpful Jira assistant. Use the following Jira information to help answer questions.
-Format your responses in markdown to make them easy to read and understand.
+Format your responses in markdown format to make them easy to read and understand.
 When referring to specific Jira issues, always include their keys.
+
+Don't use tables.
 
 Query type: {classification["type"]}
 Relevant Jira information:
 {combined_context}"""
 
+    print("\n=== Conversation History ===")
     # Format conversation history for Cohere
     chat_history = []
     for msg in request.conversation_history:
@@ -213,7 +298,9 @@ Relevant Jira information:
             "role": "user" if msg.role == "user" else "chatbot",
             "message": msg.content
         })
+        print(f"{msg.role}: {msg.content[:100]}...")
 
+    print("\nSending request to Cohere...")
     # Get response from Cohere
     response = co.chat(
         model="command-r-plus",
@@ -223,4 +310,8 @@ Relevant Jira information:
         temperature=0
     )
     
+    print("\n=== Response Generated ===")
+    print(f"Response length: {len(response.text)} characters")
+    print("="*30)
+    print(response.text)
     return response.text

@@ -189,14 +189,19 @@ const ChatArea = ({ conversation }) => {
   }
 
   return (
-    <div className="flex-1 flex flex-col h-screen bg-gradient-to-br from-gray-50 to-blue-50">
+    <div className="flex-1 flex flex-col h-screen bg-gradient-to-br from-gray-50 via-blue-50 to-indigo-50">
       {/* Chat Header */}
-      <div className="bg-white border-b border-gray-200 p-4 shadow-sm">
+      <div className="bg-white/80 backdrop-blur-sm border-b border-gray-200 p-4 sticky top-0 z-10">
         <div className="flex items-center justify-between max-w-4xl mx-auto">
-          <h2 className="text-lg font-semibold text-gray-800">{conversation.title}</h2>
+          <div className="flex items-center space-x-3">
+            <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-blue-500 to-indigo-600 flex items-center justify-center shadow-lg ring-2 ring-white">
+              <span className="text-white text-lg font-semibold">J</span>
+            </div>
+            <h2 className="text-xl font-semibold bg-gradient-to-r from-blue-700 to-indigo-700 bg-clip-text text-transparent">{conversation.title}</h2>
+          </div>
           <div className="flex items-center space-x-2">
-            <button className="p-2 hover:bg-gray-100 rounded-lg transition-colors">
-              <svg className="w-5 h-5 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <button className="p-2 hover:bg-white/90 rounded-lg transition-all duration-200 group">
+              <svg className="w-5 h-5 text-gray-500 group-hover:text-blue-600 transition-colors duration-200" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 12h.01M12 12h.01M19 12h.01M6 12a1 1 0 11-2 0 1 1 0 012 0zm7 0a1 1 0 11-2 0 1 1 0 012 0zm7 0a1 1 0 11-2 0 1 1 0 012 0z" />
               </svg>
             </button>
@@ -205,17 +210,17 @@ const ChatArea = ({ conversation }) => {
       </div>
 
       {/* Messages Area */}
-      <div className="flex-1 overflow-y-auto p-4 space-y-6">
+      <div className="flex-1 overflow-y-auto p-4 space-y-6 scrollbar-thin scrollbar-thumb-blue-200 scrollbar-track-transparent hover:scrollbar-thumb-blue-300">
         <div className="max-w-4xl mx-auto">
           {messages.map((msg, index) => (
-            <div key={msg.id || index} className="mb-6">
+            <div key={msg.id || index} className="mb-6 animate-fade-in">
               <ChatMessage type={msg.type} message={msg.content} />
             </div>
           ))}
           {isLoading && (
-            <div className="flex justify-start">
-              <div className="bg-white border border-gray-200 rounded-2xl p-4 shadow-sm flex items-center space-x-3">
-                <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-blue-400 to-blue-600 flex items-center justify-center shadow-sm animate-pulse">
+            <div className="flex justify-start animate-fade-in">
+              <div className="bg-white/80 backdrop-blur-sm border border-gray-200 rounded-2xl p-4 shadow-sm flex items-center space-x-3">
+                <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-blue-500 to-indigo-600 flex items-center justify-center shadow-sm">
                   <span className="text-white text-sm font-medium">J</span>
                 </div>
                 <div className="flex space-x-2">
@@ -231,20 +236,20 @@ const ChatArea = ({ conversation }) => {
       </div>
 
       {/* Input Area */}
-      <div className="border-t border-gray-200 bg-white p-4 shadow-lg">
+      <div className="border-t border-gray-200 bg-white/80 backdrop-blur-sm p-4 sticky bottom-0">
         <div className="max-w-4xl mx-auto">
           <form onSubmit={handleSubmit} className="flex space-x-4">
-            <div className="flex-1 relative">
+            <div className="flex-1 relative group">
               <input
                 type="text"
                 value={message}
                 onChange={(e) => setMessage(e.target.value)}
                 placeholder="Type your message here..."
-                className="w-full rounded-xl border border-gray-300 px-4 py-3 focus:outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-200 transition-all pl-12"
+                className="w-full rounded-xl border border-gray-300 px-4 py-3 focus:outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-200 transition-all pl-12 bg-white/90 backdrop-blur-sm shadow-sm group-hover:shadow-md"
                 disabled={isLoading}
               />
               <svg 
-                className="w-6 h-6 text-gray-400 absolute left-4 top-1/2 transform -translate-y-1/2" 
+                className="w-6 h-6 text-gray-400 absolute left-4 top-1/2 transform -translate-y-1/2 group-hover:text-blue-500 transition-colors duration-200" 
                 fill="none" 
                 stroke="currentColor" 
                 viewBox="0 0 24 24"
@@ -254,7 +259,7 @@ const ChatArea = ({ conversation }) => {
             </div>
             <button
               type="submit"
-              className={`bg-gradient-to-r from-blue-500 to-blue-600 text-white px-6 py-3 rounded-xl hover:from-blue-600 hover:to-blue-700 transition-all shadow-md hover:shadow-lg flex items-center space-x-2 ${
+              className={`bg-gradient-to-r from-blue-500 via-blue-600 to-indigo-600 text-white px-6 py-3 rounded-xl hover:from-blue-600 hover:via-blue-700 hover:to-indigo-700 transition-all shadow-md hover:shadow-lg hover:scale-105 active:scale-95 flex items-center space-x-2 ${
                 isLoading ? 'opacity-50 cursor-not-allowed' : ''
               }`}
               disabled={isLoading}
