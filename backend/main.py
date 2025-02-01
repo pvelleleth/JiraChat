@@ -9,6 +9,7 @@ from pydantic import BaseModel
 from typing import List
 from jira import JIRA
 from datetime import datetime, timedelta
+import json
 
 # Load environment variables from .env file
 load_dotenv()
@@ -154,6 +155,75 @@ Q: "What bugs were reported in the last month that mention authentication?"
             "jql": None
         }
 
+def format_pipe_separated_text_to_table(text: str) -> str:
+    """Convert pipe-separated text into a properly formatted markdown table."""
+    lines = text.split('\n')
+    formatted_lines = []
+    max_lengths = {}  # To store the maximum length of each column
+    
+    # First pass: Split lines and calculate max lengths
+    processed_lines = []
+    for line in lines:
+        # Split by pipe and clean up each cell
+        cells = [cell.strip() for cell in line.split('|')]
+        # Remove empty cells from start/end
+        cells = [cell for cell in cells if cell]
+        if cells:
+            processed_lines.append(cells)
+            # Update max lengths for each column
+            for i, cell in enumerate(cells):
+                max_lengths[i] = max(max_lengths.get(i, 0), len(cell))
+    
+    if not processed_lines:
+        return text
+    
+    # Second pass: Format the table with proper spacing
+    for i, cells in enumerate(processed_lines):
+        # Pad each cell to match the max length of its column
+        padded_cells = []
+        for j, cell in enumerate(cells):
+            if j < len(max_lengths):  # Only process cells that have a corresponding max length
+                padded_cells.append(cell.ljust(max_lengths[j]))
+        
+        # Ensure consistent spacing around the pipe character
+        formatted_lines.append(f"| {' | '.join(padded_cells)} |")
+        
+        # Add separator line after header with exactly three dashes per column
+        if i == 0:
+            separator = []
+            for j in range(len(cells)):
+                if j < len(max_lengths):
+                    separator.append('-' * 3)  # Use exactly three dashes for each column
+            formatted_lines.append(f"| {' | '.join(separator)} |")
+    
+    return '\n'.join(formatted_lines)
+
+def format_jira_results(issues) -> str:
+    """Format Jira issues into a clean markdown table."""
+    if not issues:
+        return "No issues found matching the criteria."
+    
+    # Define the columns we want to show
+    headers = ["Project", "Issue Key", "Summary", "Status", "Assignee"]
+    rows = [headers]  # Start with headers
+    
+    # Add data rows
+    for issue in issues:
+        row = [
+            issue.fields.project.key,
+            issue.key,
+            issue.fields.summary,
+            issue.fields.status.name,
+            issue.fields.assignee.displayName if issue.fields.assignee else "Unassigned"
+        ]
+        rows.append(row)
+    
+    # Convert to pipe-separated format with proper spacing
+    table_text = '\n'.join(' | '.join(str(cell) for cell in row) for row in rows)
+    
+    # Format into a proper table
+    return format_pipe_separated_text_to_table(table_text)
+
 def get_jira_issues(jql: str) -> str:
     """Fetch issues from Jira API using JQL."""
     print("\n=== Jira API Search ===")
@@ -169,28 +239,11 @@ def get_jira_issues(jql: str) -> str:
         try:
             issues = jira.search_issues(jql, maxResults=50)
             print(f"Found {len(issues)} matching issues")
+            return format_jira_results(issues)
         except Exception as e:
             print(f"JQL Query failed: {jql}")
             print(f"Error: {str(e)}")
             raise e
-        
-        # Format results
-        if not issues:
-            print("No issues found")
-            return "No issues found matching the criteria."
-            
-        results = ""
-        for issue in issues:
-            results += f"\nProject: {issue.fields.project.key}\n"
-            results += f"Issue Key: {issue.key}\n"
-            results += f"Summary: {issue.fields.summary}\n"
-            results += f"Description: {issue.fields.description or 'No description'}\n"
-            results += f"Assignee: {issue.fields.assignee.displayName if issue.fields.assignee else 'Unassigned'}\n"
-            results += f"Status: {issue.fields.status.name}\n"
-            results += f"Issue Type: {issue.fields.issuetype.name}\n"
-            results += "-" * 50 + "\n"
-        
-        return results
     except Exception as e:
         print(f"Error in get_jira_issues: {str(e)}")
         return f"Error fetching issues: {str(e)}"
@@ -284,7 +337,19 @@ Information from Jira API:
 Format your responses in markdown format to make them easy to read and understand.
 When referring to specific Jira issues, always include their keys.
 
-Don't use tables.
+When presenting tabular data, follow these strict markdown table formatting rules:
+1. Always use proper markdown table syntax
+2. Include exactly one space after and before each | character
+3. Use consistent column widths
+4. Include a header row and separator row
+5. Example format:
+
+| Column 1   | Column 2   | Column 3   |
+|------------|------------|------------|
+| Data 1     | Data 2     | Data 3     |
+| Data 4     | Data 5     | Data 6     |
+
+If you receive pipe-separated text that's not in proper table format, convert it to a proper markdown table.
 
 Query type: {classification["type"]}
 Relevant Jira information:
@@ -314,4 +379,10 @@ Relevant Jira information:
     print(f"Response length: {len(response.text)} characters")
     print("="*30)
     print(response.text)
-    return response.text
+
+    response_text = response.text
+    # Check if the response contains pipe characters and try to format it as a table
+    if '|' in response_text:
+        response_text = format_pipe_separated_text_to_table(response_text)
+    
+    return response_text
