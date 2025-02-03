@@ -9,6 +9,7 @@ from pydantic import BaseModel
 from typing import List
 from jira import JIRA
 from datetime import datetime, timedelta
+import json
 
 # Load environment variables from .env file
 load_dotenv()
@@ -49,15 +50,25 @@ class ConversationRequest(BaseModel):
     question: str
     conversation_history: List[Message]
 
-def classify_query(question: str) -> dict:
+def classify_query(question: str, conversation_history: List[Message] = None) -> dict:
     """Use Cohere to classify the query type and generate JQL."""
     print("\n=== Query Classification and JQL Generation ===")
     print(f"Input Question: {question}")
+    
+    # Format conversation history for context
+    history_context = ""
+    if conversation_history:
+        history_context = "Previous conversation:\n"
+        for msg in conversation_history:
+            role = "User" if msg.role == "user" else "Assistant"
+            history_context += f"{role}: {msg.content}\n"
+        history_context += "\nCurrent question:"
     
     prompt = f"""You are a Jira query expert. Analyze the following question about Jira issues and:
 1. Determine the most appropriate search strategy
 2. Generate a JQL query if appropriate
 
+{history_context}
 Question: "{question}"
 
 First, classify the query into one of these types:
@@ -67,12 +78,14 @@ First, classify the query into one of these types:
 4. HYBRID (needs both temporal/status and semantic search)
 
 Then, if the query would benefit from a JQL search (temporal, status-based, or hybrid queries), generate an appropriate JQL query.
+Take into account the conversation history when determining the query type and generating JQL.
 
 Guidelines for JQL:
 - Use proper JQL syntax with quotes around values containing spaces
 - Use relative dates like -1w, startOfWeek(), endOfWeek() for time-based queries
 - Include all relevant conditions (status, priority, project, type, etc.)
 - Don't include ORDER BY clauses (they're added automatically)
+- Consider context from previous messages when building the query
 
 Output your response in this exact JSON format:
 {{
@@ -234,8 +247,8 @@ def answer(request: ConversationRequest):
     print(f"Question: {request.question}")
     print(f"Conversation History Length: {len(request.conversation_history)}")
     
-    # Classify the query and get JQL
-    classification = classify_query(request.question)
+    # Classify the query and get JQL, now including conversation history
+    classification = classify_query(request.question, request.conversation_history)
     
     # Initialize context strings
     rag_context = ""
@@ -281,10 +294,8 @@ Information from Jira API:
 
     # Create preamble with search results and instructions
     preamble = f"""You are a helpful Jira assistant. Use the following Jira information to help answer questions.
-Format your responses in markdown format to make them easy to read and understand.
+Format your responses in markdown format to make them easy to read and understand. Use \n to add newlines.
 When referring to specific Jira issues, always include their keys.
-
-Don't use tables.
 
 Query type: {classification["type"]}
 Relevant Jira information:
@@ -314,4 +325,7 @@ Relevant Jira information:
     print(f"Response length: {len(response.text)} characters")
     print("="*30)
     print(response.text)
+    
+    # Ensure newlines are preserved in the response
+    
     return response.text
