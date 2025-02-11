@@ -135,7 +135,8 @@ const ChatArea = ({ conversation }) => {
         },
         body: JSON.stringify({
           question: userMessageContent,
-          conversation_history: conversationHistory
+          conversation_history: conversationHistory,
+          user_id: user.id
         })
       });
       const botResponse = await response.text();

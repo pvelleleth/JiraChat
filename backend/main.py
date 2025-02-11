@@ -10,37 +10,49 @@ from typing import List
 from jira import JIRA
 from datetime import datetime, timedelta
 import json
+from supabase import create_client, Client
 
 # Load environment variables from .env file
 load_dotenv()
 
+# Initialize Supabase client
+supabase: Client = create_client(
+    os.getenv("SUPABASE_URL"),
+    os.getenv("SUPABASE_SERVICE_KEY")
+)
+
 # Now you can access your API keys
 PINECONE_API_KEY = os.getenv("PINECONE_API_KEY")
 COHERE_API_KEY = os.getenv("COHERE_API_KEY")
-JIRA_TOKEN = os.getenv("JIRA_TOKEN")
-JIRA_DOMAIN = os.getenv("JIRA_DOMAIN")
 
 app = FastAPI()
 
-# Initialize clients
+# Initialize other clients
 pc = Pinecone(api_key=PINECONE_API_KEY)
 INDEX_NAME = "jira-documents"
 co = cohere.Client(api_key=COHERE_API_KEY)
-jira = JIRA(
-    server=f"https://{JIRA_DOMAIN}",
-    basic_auth=(os.getenv("JIRA_EMAIL"), JIRA_TOKEN)
-)
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
-# Connect to the index
-index = pc.Index(INDEX_NAME)
+async def get_jira_client(user_id: str) -> JIRA:
+    """Get a JIRA client instance for a specific user."""
+    try:
+        # Get user settings
+        settings = supabase.table('user_settings').select('*').eq('user_id', user_id).single().execute()
+        if not settings.data:
+            raise HTTPException(status_code=404, detail="Jira settings not found")
+            
+        # Get the Jira token from vault
+        secret = supabase.rpc('get_secret', {'secret_id': settings.data['jira_token_secret_id']}).execute()
+        if not secret.data:
+            raise HTTPException(status_code=404, detail="Jira token not found")
+            
+        # Create JIRA client
+        jira = JIRA(
+            server=f"https://{settings.data['jira_domain']}",
+            basic_auth=(settings.data['jira_email'], secret.data['secret'])
+        )
+        return jira
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to initialize Jira client: {str(e)}")
 
 class Message(BaseModel):
     role: str
@@ -49,6 +61,7 @@ class Message(BaseModel):
 class ConversationRequest(BaseModel):
     question: str
     conversation_history: List[Message]
+    user_id: str  # Add user_id to the request
 
 def classify_query(question: str, conversation_history: List[Message] = None) -> dict:
     """Use Cohere to classify the query type and generate JQL."""
@@ -219,9 +232,17 @@ def get_embedding(text, model="embed-english-v3.0"):
     return response.embeddings[0]
 
 # Perform semantic search
-def semantic_search(query, top_k=30):
+async def semantic_search(query: str, user_id: str, top_k=30):
     print("\n=== Semantic Search ===")
     print(f"Query: {query}")
+    
+    # Get user's namespace from settings
+    settings = supabase.table('user_settings').select('pinecone_namespace').eq('user_id', user_id).single().execute()
+    if not settings.data or not settings.data.get('pinecone_namespace'):
+        raise Exception("User's Pinecone namespace not found. Please sync Jira data first.")
+    
+    namespace = settings.data['pinecone_namespace']
+    print(f"Using namespace: {namespace}")
     
     # Generate query embedding
     query_embedding = get_embedding(query)
@@ -231,9 +252,10 @@ def semantic_search(query, top_k=30):
     search_results = index.query(
         vector=query_embedding,
         top_k=top_k,
-        include_metadata=True
+        include_metadata=True,
+        namespace=namespace
     )
-    print(f"Found {len(search_results['matches'])} semantic matches")
+    print(f"Found {len(search_results['matches'])} semantic matches in namespace {namespace}")
 
     return search_results
 
@@ -242,10 +264,13 @@ def read_root():
     return {"message": "Hello, World!"}
 
 @app.post("/answer")
-def answer(request: ConversationRequest):
+async def answer(request: ConversationRequest):
     print("\n========== New Request ==========")
     print(f"Question: {request.question}")
     print(f"Conversation History Length: {len(request.conversation_history)}")
+    
+    # Get JIRA client for this user
+    jira = await get_jira_client(request.user_id)
     
     # Classify the query and get JQL, now including conversation history
     classification = classify_query(request.question, request.conversation_history)
@@ -257,18 +282,22 @@ def answer(request: ConversationRequest):
     # Get RAG results if needed
     if classification["needs_rag"]:
         print("\nPerforming semantic search...")
-        results = semantic_search(request.question)
-        print(f"Processing {len(results['matches'])} semantic search results")
-        for match in results['matches']:
-            metadata = match['metadata']
-            rag_context += f"\nProject: {metadata['project']}\n"
-            rag_context += f"Issue Key: {metadata['issue_key']}\n"
-            rag_context += f"Summary: {metadata['summary']}\n"
-            rag_context += f"Description: {metadata['description']}\n"
-            rag_context += f"Assignee: {metadata['assignee']}\n"
-            rag_context += f"Status: {metadata['status']}\n"
-            rag_context += f"Issue Type: {metadata['issue_type']}\n"
-            rag_context += "-" * 50 + "\n"
+        try:
+            results = await semantic_search(request.question, request.user_id)
+            print(f"Processing {len(results['matches'])} semantic search results")
+            for match in results['matches']:
+                metadata = match['metadata']
+                rag_context += f"\nProject: {metadata['project']}\n"
+                rag_context += f"Issue Key: {metadata['issue_key']}\n"
+                rag_context += f"Summary: {metadata['summary']}\n"
+                rag_context += f"Description: {metadata['description']}\n"
+                rag_context += f"Assignee: {metadata['assignee']}\n"
+                rag_context += f"Status: {metadata['status']}\n"
+                rag_context += f"Issue Type: {metadata['issue_type']}\n"
+                rag_context += "-" * 50 + "\n"
+        except Exception as e:
+            print(f"Error in semantic search: {str(e)}")
+            rag_context = "Error: Unable to perform semantic search. Please ensure you have synced your Jira data."
     
     # Get Jira API results if needed
     if classification["needs_jira_api"] and classification["jql"]:

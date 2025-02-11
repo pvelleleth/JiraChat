@@ -48,16 +48,28 @@ const Settings = () => {
     setMessage({ type: '', text: '' });
 
     try {
-      const { error } = await supabase
+      // First, store the Jira token in the vault
+      const { data: secret, error: vaultError } = await supabase.rpc(
+        'create_jira_token_secret',
+        { 
+          user_id: user.id,
+          token: settings.jiraToken
+        }
+      );
+
+      if (vaultError) throw vaultError;
+
+      // Then store the other settings in the user_settings table
+      const { error: settingsError } = await supabase
         .from('user_settings')
         .upsert({
           user_id: user.id,
-          jira_token: settings.jiraToken,
           jira_domain: settings.jiraDomain,
-          jira_email: settings.jiraEmail
+          jira_email: settings.jiraEmail,
+          jira_token_secret_id: secret // ID of the vault secret
         });
 
-      if (error) throw error;
+      if (settingsError) throw settingsError;
 
       setMessage({ type: 'success', text: 'Settings saved successfully!' });
     } catch (error) {
