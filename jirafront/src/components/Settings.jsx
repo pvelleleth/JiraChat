@@ -115,7 +115,7 @@ const Settings = () => {
           {/* Header */}
           <div className="flex items-center space-x-4 mb-8">
             <button 
-              onClick={() => navigate('/')}
+              onClick={() => navigate('/home')}
               className="p-2 hover:bg-gray-100 rounded-lg transition-colors"
             >
               <svg className="w-6 h-6 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
