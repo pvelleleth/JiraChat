@@ -42,24 +42,6 @@ const Sidebar = ({ onNewChat, onSelectChat, currentConversationId }) => {
 
     if (user) {
       fetchConversations();
-
-      // Subscribe to changes for current user's conversations only
-      const channel = supabase
-        .channel(`conversations:${user.id}`)
-        .on('postgres_changes', 
-          { 
-            event: '*', 
-            schema: 'public', 
-            table: 'conversations',
-            filter: `user_id=eq.${user.id}`
-          }, 
-          fetchConversations
-        )
-        .subscribe();
-
-      return () => {
-        supabase.removeChannel(channel);
-      };
     }
   }, [user]);
 
@@ -80,6 +62,8 @@ const Sidebar = ({ onNewChat, onSelectChat, currentConversationId }) => {
     if (error) {
       console.error('Error creating conversation:', error);
     } else {
+      // Update local state
+      setConversations(prev => [data, ...prev]);
       onNewChat(data);
     }
   };

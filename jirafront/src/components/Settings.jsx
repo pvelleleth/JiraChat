@@ -42,67 +42,82 @@ const Settings = () => {
     getUser();
   }, [navigate]);
 
-  const handleSubmit = async (e) => {
-    e.preventDefault();
-    setIsSaving(true);
-    setMessage({ type: '', text: '' });
-
-    try {
-      // First, store the Jira token in the vault
-      const { data: secret, error: vaultError } = await supabase.rpc(
-        'create_jira_token_secret',
-        { 
-          user_id: user.id,
-          token: settings.jiraToken
-        }
-      );
-
-      if (vaultError) throw vaultError;
-
-      // Then store the other settings in the user_settings table
-      const { error: settingsError } = await supabase
-        .from('user_settings')
-        .upsert({
-          user_id: user.id,
-          jira_domain: settings.jiraDomain,
-          jira_email: settings.jiraEmail,
-          jira_token_secret_id: secret // ID of the vault secret
-        });
-
-      if (settingsError) throw settingsError;
-
-      setMessage({ type: 'success', text: 'Settings saved successfully!' });
-    } catch (error) {
-      console.error('Error saving settings:', error);
-      setMessage({ type: 'error', text: 'Failed to save settings. Please try again.' });
-    } finally {
-      setIsSaving(false);
-    }
-  };
-
   const handleSync = async () => {
     setIsSaving(true);
     setMessage({ type: '', text: '' });
 
     try {
+      // Validate inputs
+      if (!settings.jiraToken || !settings.jiraDomain || !settings.jiraEmail) {
+        throw new Error('Please fill in all Jira settings before syncing');
+      }
+
+      // Store the Jira token using the new encryption system
+      const { data: secret, error: secretError } = await supabase.rpc(
+        'store_secret',
+        { 
+          p_user_id: user.id,
+          p_data: settings.jiraToken,
+          p_type: 'jira_token',
+          p_encryption_key: ''
+        }
+      ); 
+
+      if (secretError) {
+        console.error('Secret error:', secretError);
+        throw new Error(`Failed to store Jira token securely: ${secretError.message}`);
+      } 
+      
+      // Update user settings
+      const { error: settingsError } = await supabase
+        .from('user_settings')
+        .upsert({
+          user_id: user.id,
+          jira_domain: settings.jiraDomain,
+          jira_email: settings.jiraEmail
+        }, {
+          onConflict: 'user_id'
+        });
+
+      if (settingsError) {
+        console.error('Settings error:', settingsError);
+        throw new Error(`Failed to save settings: ${settingsError.message}`);
+      }
+
+      // Wait a moment for Supabase to process the updates
+      await new Promise(resolve => setTimeout(resolve, 1000));
+
+      // Now call the sync endpoint with only user_id
       const response = await fetch('http://localhost:8000/sync', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
-          jira_token: settings.jiraToken,
-          jira_domain: settings.jiraDomain,
-          jira_email: settings.jiraEmail
+          user_id: user.id
         })
       });
+      /*
+      const responseText = await response.text();
+      let errorDetail;
+      try {
+        const errorJson = JSON.parse(responseText);
+        errorDetail = errorJson.detail;
+      } catch (e) {
+        errorDetail = responseText;
+      }
 
-      if (!response.ok) throw new Error('Failed to sync with Jira');
-
+      if (!response.ok) {
+        throw new Error(errorDetail || 'Failed to sync with Jira');
+      }
+      */
       setMessage({ type: 'success', text: 'Successfully synced with Jira!' });
     } catch (error) {
       console.error('Error syncing with Jira:', error);
-      setMessage({ type: 'error', text: 'Failed to sync with Jira. Please check your settings and try again.' });
+      setMessage({ 
+        type: 'error', 
+        text: error.message || 'An unexpected error occurred while syncing with Jira'
+      });
     } finally {
       setIsSaving(false);
     }
@@ -143,7 +158,7 @@ const Settings = () => {
           )}
 
           {/* Settings Form */}
-          <form onSubmit={handleSubmit} className="space-y-6">
+          <div className="space-y-6">
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">
                 Jira Domain
@@ -204,29 +219,19 @@ const Settings = () => {
               </div>
             )}
 
-            <div className="flex items-center space-x-4">
-              <button
-                type="submit"
-                disabled={isSaving}
-                className={`flex-1 bg-gradient-to-r from-blue-500 via-blue-600 to-indigo-600 text-white px-6 py-3 rounded-xl hover:from-blue-600 hover:via-blue-700 hover:to-indigo-700 transition-all shadow-md hover:shadow-lg ${
-                  isSaving ? 'opacity-50 cursor-not-allowed' : 'hover:scale-105 active:scale-95'
-                }`}
-              >
-                {isSaving ? 'Saving...' : 'Save Settings'}
-              </button>
-
+            <div className="flex items-center">
               <button
                 type="button"
                 onClick={handleSync}
                 disabled={isSaving}
-                className={`flex-1 bg-white text-blue-600 border border-blue-200 px-6 py-3 rounded-xl hover:bg-blue-50 transition-all shadow-sm hover:shadow-md ${
+                className={`w-full bg-gradient-to-r from-blue-500 via-blue-600 to-indigo-600 text-white px-6 py-3 rounded-xl hover:from-blue-600 hover:via-blue-700 hover:to-indigo-700 transition-all shadow-md hover:shadow-lg ${
                   isSaving ? 'opacity-50 cursor-not-allowed' : 'hover:scale-105 active:scale-95'
                 }`}
               >
                 {isSaving ? 'Syncing...' : 'Sync with Jira'}
               </button>
             </div>
-          </form>
+          </div>
         </div>
       </div>
     </div>

@@ -12,6 +12,10 @@ from datetime import datetime, timedelta
 import json
 from supabase import create_client, Client
 
+load_dotenv() 
+
+from backend.routers.syncs import router as sync_router
+
 # Load environment variables from .env file
 load_dotenv()
 
@@ -27,6 +31,15 @@ COHERE_API_KEY = os.getenv("COHERE_API_KEY")
 
 app = FastAPI()
 
+app.include_router(sync_router)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # Allows specified origins
+    allow_credentials=True,
+    allow_methods=["*"],  # Allows all methods (GET, POST, etc.)
+    allow_headers=["*"],  # Allows all headers
+)
 # Initialize other clients
 pc = Pinecone(api_key=PINECONE_API_KEY)
 INDEX_NAME = "jira-documents"
@@ -40,15 +53,23 @@ async def get_jira_client(user_id: str) -> JIRA:
         if not settings.data:
             raise HTTPException(status_code=404, detail="Jira settings not found")
             
-        # Get the Jira token from vault
-        secret = supabase.rpc('get_secret', {'secret_id': settings.data['jira_token_secret_id']}).execute()
+        # Get the Jira token using the new encryption system
+        secret = supabase.rpc(
+            'get_secret',
+            {
+                'p_user_id': user_id,
+                'p_type': 'jira_token',
+                'p_encryption_key': os.getenv('ENCRYPTION_KEY')
+            }
+        ).execute()
+        
         if not secret.data:
             raise HTTPException(status_code=404, detail="Jira token not found")
             
         # Create JIRA client
         jira = JIRA(
             server=f"https://{settings.data['jira_domain']}",
-            basic_auth=(settings.data['jira_email'], secret.data['secret'])
+            basic_auth=(settings.data['jira_email'], secret.data)
         )
         return jira
     except Exception as e:
@@ -180,7 +201,7 @@ Q: "What bugs were reported in the last month that mention authentication?"
             "jql": None
         }
 
-def get_jira_issues(jql: str) -> str:
+def get_jira_issues(jira: JIRA, jql: str) -> str:
     """Fetch issues from Jira API using JQL."""
     print("\n=== Jira API Search ===")
     print(f"JQL Query: {jql}")
@@ -231,6 +252,25 @@ def get_embedding(text, model="embed-english-v3.0"):
     )
     return response.embeddings[0]
 
+async def get_jira_users(jira: JIRA):
+    """Fetch all users from the Jira instance."""
+    print("\n=== Fetching Jira Users ===")
+    
+    try:
+        users = jira.users()
+        print(f"Found {len(users)} users in Jira")
+        
+        results = ""
+        for user in users:
+            results += f"User Key: {user.key}\n"
+            results += f"Display Name: {user.displayName}\n"
+            results += f"Email: {user.emailAddress if user.emailAddress else 'No email'}\n"
+            results += "-" * 50 + "\n"
+        
+        return results if results else "No users found in Jira."
+    except Exception as e:
+        print(f"Error fetching users: {str(e)}")
+        return f"Error fetching users: {str(e)}"
 # Perform semantic search
 async def semantic_search(query: str, user_id: str, top_k=30):
     print("\n=== Semantic Search ===")
@@ -249,7 +289,7 @@ async def semantic_search(query: str, user_id: str, top_k=30):
     print("Generated query embedding")
 
     # Query the Pinecone index
-    search_results = index.query(
+    search_results = pc.index(INDEX_NAME).query(
         vector=query_embedding,
         top_k=top_k,
         include_metadata=True,
@@ -278,7 +318,7 @@ async def answer(request: ConversationRequest):
     # Initialize context strings
     rag_context = ""
     jira_api_context = ""
-    
+    jira_users_context = await get_jira_users(jira)
     # Get RAG results if needed
     if classification["needs_rag"]:
         print("\nPerforming semantic search...")
@@ -302,7 +342,7 @@ async def answer(request: ConversationRequest):
     # Get Jira API results if needed
     if classification["needs_jira_api"] and classification["jql"]:
         print("\nPerforming Jira API search...")
-        jira_api_context = get_jira_issues(classification["jql"])
+        jira_api_context = get_jira_issues(jira, classification["jql"])
 
     # Combine contexts
     print("\n=== Final Context ===")
@@ -323,10 +363,12 @@ Information from Jira API:
 
     # Create preamble with search results and instructions
     preamble = f"""You are a helpful Jira assistant. Use the following Jira information to help answer questions.
-Format your responses in markdown format to make them easy to read and understand. Use \n to add newlines.
+If you are unsure about something, please ask the user for clarification with appropriate questions.
+Format your responses in markdown format to make them easy to read and understand. 
 When referring to specific Jira issues, always include their keys.
 
 Query type: {classification["type"]}
+Jira users: {jira_users_context}
 Relevant Jira information:
 {combined_context}"""
 

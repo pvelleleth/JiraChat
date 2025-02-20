@@ -4,12 +4,14 @@ import ReactMarkdown from 'react-markdown';
 const formatMessage = (message) => {
   // Clean up the message by removing escape characters and extra whitespace
   message = message.replace(/^"|"$/g, ''); // Remove leading and trailing double quotes
+  /*
   const cleanMessage = message
     .replace(/\\n/g, '\n') // Replace \n with actual newlines
     .replace(/\\/g, '') // Remove remaining backslashes
     .replace(/\n+/g, '\n') // Replace multiple newlines with single newlines
     .trim();
-
+  */
+  const cleanMessage = message
   // Split into introduction and items
   const parts = cleanMessage.split('\n\n');
   const introduction = parts[0];
@@ -36,55 +38,55 @@ const ChatMessage = ({ type, message }) => {
       >
         {isBot && (
           <div className="flex items-center space-x-3 mb-3">
-            <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-blue-500 to-indigo-600 flex items-center justify-center shadow-sm ring-2 ring-white">
-              <span className="text-white text-sm font-medium">J</span>
+            <div className="w-10 h-10 rounded-lg bg-gradient-to-br from-blue-500 to-indigo-600 flex items-center justify-center shadow-sm ring-2 ring-white">
+              <span className="text-white text-base font-medium">J</span>
             </div>
             <div>
-              <span className="text-sm font-medium bg-gradient-to-r from-blue-700 to-indigo-700 bg-clip-text text-transparent">Jira Assistant</span>
-              <p className="text-xs text-gray-500">AI Powered</p>
+              <span className="text-base font-medium bg-gradient-to-r from-blue-700 to-indigo-700 bg-clip-text text-transparent">Jira Assistant</span>
+              <p className="text-sm text-gray-500">AI Powered</p>
             </div>
           </div>
         )}
         <div className={`relative ${isBot ? 'text-gray-700' : 'text-white'}`}>
           {isBot ? (
-            <div className="prose prose-sm max-w-none">
+            <div className="prose prose-lg max-w-none">
               <ReactMarkdown
                 components={{
-                  h1: ({node, ...props}) => <h1 className="text-xl font-bold mb-3 bg-gradient-to-r from-blue-700 to-indigo-700 bg-clip-text text-transparent" {...props} />,
-                  h2: ({node, ...props}) => <h2 className="text-lg font-bold mb-2 bg-gradient-to-r from-blue-700 to-indigo-700 bg-clip-text text-transparent" {...props} />,
-                  h3: ({node, ...props}) => <h3 className="text-base font-bold mb-2 bg-gradient-to-r from-blue-700 to-indigo-700 bg-clip-text text-transparent" {...props} />,
-                  p: ({node, ...props}) => <p className="text-sm leading-relaxed mb-3" {...props} />,
-                  ul: ({node, ...props}) => <ul className="list-disc list-inside space-y-2 mb-3" {...props} />,
-                  ol: ({node, ...props}) => <ol className="list-decimal list-inside space-y-2 mb-3" {...props} />,
-                  li: ({node, ...props}) => <li className="text-sm leading-relaxed" {...props} />,
+                  h1: ({node, ...props}) => <h1 className="text-2xl font-bold mb-4 bg-gradient-to-r from-blue-700 to-indigo-700 bg-clip-text text-transparent" {...props} />,
+                  h2: ({node, ...props}) => <h2 className="text-xl font-bold mb-3 bg-gradient-to-r from-blue-700 to-indigo-700 bg-clip-text text-transparent" {...props} />,
+                  h3: ({node, ...props}) => <h3 className="text-lg font-bold mb-2 bg-gradient-to-r from-blue-700 to-indigo-700 bg-clip-text text-transparent" {...props} />,
+                  p: ({node, ...props}) => <p className="text-base leading-relaxed mb-4" {...props} />,
+                  ul: ({node, ...props}) => <ul className="list-disc list-inside space-y-3 mb-4" {...props} />,
+                  ol: ({node, ...props}) => <ol className="list-decimal list-inside space-y-3 mb-4" {...props} />,
+                  li: ({node, ...props}) => <li className="text-base leading-relaxed" {...props} />,
                   code: ({node, inline, ...props}) => 
                     inline ? (
-                      <code className="bg-blue-50/50 px-1.5 py-0.5 rounded text-sm font-mono text-blue-700" {...props} />
+                      <code className="bg-blue-50/50 px-2 py-0.5 rounded text-base font-mono text-blue-700" {...props} />
                     ) : (
-                      <code className="block bg-blue-50/50 p-3 rounded-lg text-sm font-mono my-3 text-blue-700 whitespace-pre-wrap" {...props} />
+                      <code className="block bg-blue-50/50 p-4 rounded-lg text-base font-mono my-4 text-blue-700 whitespace-pre-wrap" {...props} />
                     ),
                   a: ({node, ...props}) => <a className="text-blue-600 hover:text-blue-700 underline" {...props} />,
-                  blockquote: ({node, ...props}) => <blockquote className="border-l-4 border-blue-200 pl-4 italic text-gray-600" {...props} />,
-                  table: ({node, ...props}) => <div className="overflow-x-auto my-3"><table className="min-w-full divide-y divide-gray-200" {...props} /></div>,
-                  th: ({node, ...props}) => <th className="px-3 py-2 bg-gray-50 text-left text-xs font-medium text-gray-500 uppercase tracking-wider" {...props} />,
-                  td: ({node, ...props}) => <td className="px-3 py-2 whitespace-nowrap text-sm text-gray-500" {...props} />,
+                  blockquote: ({node, ...props}) => <blockquote className="border-l-4 border-blue-200 pl-4 italic text-gray-600 text-base" {...props} />,
+                  table: ({node, ...props}) => <div className="overflow-x-auto my-4"><table className="min-w-full divide-y divide-gray-200" {...props} /></div>,
+                  th: ({node, ...props}) => <th className="px-4 py-3 bg-gray-50 text-left text-sm font-medium text-gray-500 uppercase tracking-wider" {...props} />,
+                  td: ({node, ...props}) => <td className="px-4 py-3 whitespace-nowrap text-base text-gray-500" {...props} />,
                 }}
               >
                 {formattedContent.introduction}
               </ReactMarkdown>
               {formattedContent.items.length > 0 && (
-                <ul className="space-y-2">
+                <ul className="space-y-3">
                   {formattedContent.items.map((item, index) => (
                     <li key={index} className="flex items-start space-x-2">
-                      <span className="text-blue-500 mt-1.5">•</span>
-                      <span className="text-sm leading-relaxed">{item.trim()}</span>
+                      <span className="text-blue-500 mt-1.5 text-lg">•</span>
+                      <span className="text-base leading-relaxed">{item.trim()}</span>
                     </li>
                   ))}
                 </ul>
               )}
             </div>
           ) : (
-            <p className="text-sm leading-relaxed">{message}</p>
+            <p className="text-base leading-relaxed">{message}</p>
           )}
           <div className={`absolute -bottom-4 ${isBot ? 'right-0' : 'left-0'} opacity-0 group-hover:opacity-100 transition-opacity`}>
             <div className="flex items-center space-x-2 text-gray-400">

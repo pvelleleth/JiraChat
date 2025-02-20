@@ -65,13 +65,39 @@ export type Database = {
           },
         ]
       }
+      secrets: {
+        Row: {
+          created_at: string | null
+          encrypted_data: string
+          id: string
+          type: string
+          updated_at: string | null
+          user_id: string
+        }
+        Insert: {
+          created_at?: string | null
+          encrypted_data: string
+          id?: string
+          type: string
+          updated_at?: string | null
+          user_id: string
+        }
+        Update: {
+          created_at?: string | null
+          encrypted_data?: string
+          id?: string
+          type?: string
+          updated_at?: string | null
+          user_id?: string
+        }
+        Relationships: []
+      }
       user_settings: {
         Row: {
           created_at: string | null
           id: number
           jira_domain: string
           jira_email: string
-          jira_token_secret_id: string | null
           pinecone_namespace: string | null
           updated_at: string | null
           user_id: string | null
@@ -81,7 +107,6 @@ export type Database = {
           id?: number
           jira_domain: string
           jira_email: string
-          jira_token_secret_id?: string | null
           pinecone_namespace?: string | null
           updated_at?: string | null
           user_id?: string | null
@@ -91,7 +116,6 @@ export type Database = {
           id?: number
           jira_domain?: string
           jira_email?: string
-          jira_token_secret_id?: string | null
           pinecone_namespace?: string | null
           updated_at?: string | null
           user_id?: string | null
@@ -110,9 +134,41 @@ export type Database = {
         }
         Returns: string
       }
-      get_secret: {
+      decrypt_secret: {
         Args: {
-          secret_id: string
+          p_encrypted_data: string
+          p_key: string
+        }
+        Returns: string
+      }
+      encrypt_secret: {
+        Args: {
+          p_data: string
+          p_key: string
+        }
+        Returns: string
+      }
+      get_secret:
+        | {
+            Args: {
+              p_user_id: string
+              p_type: string
+              p_encryption_key: string
+            }
+            Returns: string
+          }
+        | {
+            Args: {
+              secret_id: string
+            }
+            Returns: string
+          }
+      store_secret: {
+        Args: {
+          p_user_id: string
+          p_data: string
+          p_type: string
+          p_encryption_key: string
         }
         Returns: string
       }

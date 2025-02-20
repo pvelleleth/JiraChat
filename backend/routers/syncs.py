@@ -1,4 +1,4 @@
-from fastapi import APIRouter
+from fastapi import APIRouter, HTTPException
 from jira import JIRA
 import json
 import os
@@ -11,6 +11,7 @@ from pinecone import Pinecone, ServerlessSpec
 from typing import List, Dict
 from unstructured.partition.html import partition_html
 from unstructured.chunking.title import chunk_by_title
+from pydantic import BaseModel
 
 router = APIRouter()
 
@@ -77,12 +78,14 @@ class Vectorstore:
         Embeds the document chunks and indexes them in Pinecone.
         """
         print(f"Embedding and indexing documents for namespace {self.namespace}...")
-
+        if not self.namespace:
+            raise ValueError("Namespace cannot be empty")
+        
         if not self.docs:
             raise ValueError("No valid documents to embed")
-
+        
         # First, delete all existing vectors in this namespace
-        self.index.delete(delete_all=True, namespace=self.namespace)
+        #self.index.delete(delete_all=True, namespace=self.namespace)
 
         batch_size = 100  # Pinecone recommends batching
         vectors_to_upsert = []
@@ -204,8 +207,16 @@ async def get_jira_client(user_id: str) -> JIRA:
         if not settings.data:
             raise Exception("Jira settings not found")
             
-        # Get the Jira token from vault
-        secret = supabase.rpc('get_secret', {'secret_id': settings.data['jira_token_secret_id']}).execute()
+        # Get the Jira token using the new encryption system
+        secret = supabase.rpc(
+            'get_secret',
+            {
+                'p_user_id': user_id,
+                'p_type': 'jira_token',
+                'p_encryption_key': os.getenv('ENCRYPTION_KEY')
+            }
+        ).execute()
+        
         if not secret.data:
             raise Exception("Jira token not found")
             
@@ -231,7 +242,7 @@ async def fetch_project_data(project_key: str, jira: JIRA):
     }
 
     # JQL to exclude closed issues
-    jql_query = f'project = "{project_key}" AND statusCategory != Done AND created >= -1y ORDER BY created DESC'
+    jql_query = f'project = "{project_key}" AND statusCategory != Done AND created >= -52w ORDER BY created DESC'
 
     # Pagination setup
     start_at = 0
@@ -297,31 +308,97 @@ async def fetch_all_projects(jira: JIRA):
 
     return all_projects_data
 
-@router.get("/sync/", tags=["syncs"])
-async def sync(user_id: str):
-    # Get JIRA client
-    jira = await get_jira_client(user_id)
-    
-    # Fetch all project data
-    all_projects_data = await fetch_all_projects(jira)
-    
-    # Get or create namespace in user_settings
-    settings = supabase.table('user_settings').select('pinecone_namespace').eq('user_id', user_id).single().execute()
-    
-    if not settings.data or not settings.data.get('pinecone_namespace'):
-        # First sync - use user_id as namespace and save it
-        namespace = user_id
-        supabase.table('user_settings').update({
-            'pinecone_namespace': namespace
-        }).eq('user_id', user_id).execute()
-    else:
-        namespace = settings.data['pinecone_namespace']
-    
-    # Initialize vectorstore with user's namespace
-    vectorstore = Vectorstore(all_projects_data, namespace=namespace)
-    
-    return {
-        "message": f"Successfully synced data to namespace {namespace}",
-        "data": all_projects_data
-    }
+class SyncRequest(BaseModel):
+    user_id: str
+
+@router.post("/sync")
+async def sync(request: SyncRequest):
+    print(f"Received sync request for user_id: {request.user_id}")
+    try:
+        print(f"Starting sync for user_id: {request.user_id}")
+        
+        # Get user settings from Supabase
+        settings_response = supabase.table('user_settings').select('*').eq('user_id', request.user_id).single().execute()
+        
+        if not settings_response.data:
+            print(f"No settings found for user_id: {request.user_id}")
+            raise HTTPException(status_code=404, detail="User settings not found. Please save your Jira settings first.")
+
+        settings = settings_response.data
+        print(f"Found settings: {settings}")
+        
+        # Validate required settings
+        if not all([settings.get('jira_domain'), settings.get('jira_email')]):
+            missing_fields = []
+            if not settings.get('jira_domain'): missing_fields.append('Jira domain')
+            if not settings.get('jira_email'): missing_fields.append('Jira email')
+            print(f"Missing required fields: {missing_fields}")
+            raise HTTPException(status_code=400, detail=f"Incomplete Jira settings. Missing: {', '.join(missing_fields)}")
+
+        # Get the Jira token using the new encryption system
+        print(f"Fetching Jira token for user: {request.user_id}")
+        try:
+            secret_response = supabase.rpc(
+                'get_secret',
+                {
+                    'p_user_id': request.user_id,
+                    'p_type': 'jira_token',
+                    'p_encryption_key': "vEK8b9J/AOr+uzGVGuIFNVtrek/spCCYM3WWQJb6Pas="
+                }
+            ).execute()
+            print(f"Secret response: {secret_response}")
+        except Exception as e:
+            print(f"Error getting secret: {str(e)}")
+            raise
+        
+        try:
+            print("Initializing Jira client")
+            # Create JIRA client with the stored credentials
+            jira = JIRA(
+                server=f"https://{settings['jira_domain']}",
+                basic_auth=(settings['jira_email'], secret_response.data)
+            )
+            print(f"jira token: {settings['jira_email']}")
+            print("Successfully initialized Jira client")
+        except Exception as e:
+            import logging
+            logging.error(f"Failed to initialize Jira client: {str(e)}")
+            raise HTTPException(status_code=401, detail=f"Failed to connect to Jira. Please verify your credentials: {str(e)}")
+
+        # Fetch all project data
+        try:
+            print("Fetching project data")
+            all_projects_data = await fetch_all_projects(jira)
+            print(f"Successfully fetched data for {len(all_projects_data)} projects")
+        except Exception as e:
+            print(f"Failed to fetch projects: {str(e)}")
+            raise HTTPException(status_code=500, detail=f"Failed to fetch Jira projects: {str(e)}")
+        
+        # Get or create namespace in user_settings
+        namespace = settings.get('pinecone_namespace') or request.user_id
+        if not settings.get('pinecone_namespace'):
+            print(f"Creating new namespace: {namespace}")
+            # First sync - save the namespace
+            update_response = supabase.table('user_settings').update({
+                'pinecone_namespace': namespace
+            }).eq('user_id', request.user_id).execute()
+            
+        try:
+            print(f"Initializing vectorstore with namespace: {namespace}")
+            # Initialize vectorstore with user's namespace
+            vectorstore = Vectorstore(all_projects_data, namespace=namespace)
+            print("Successfully initialized vectorstore")
+        except Exception as e:
+            print(f"Failed to initialize vectorstore: {str(e)}")
+            raise HTTPException(status_code=500, detail=f"Failed to store data in vector database: {str(e)}")
+        
+        return {
+            "message": f"Successfully synced data to namespace {namespace}",
+            "data": all_projects_data
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"Unexpected error during sync: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Unexpected error during sync: {str(e)}")
 
